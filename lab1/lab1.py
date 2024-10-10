@@ -11,18 +11,20 @@ from urllib.parse import urlparse  # 用于解析URL
 # http://example.com/
 
 # 禁止访问的网站列表
-invalid_website = ["http://www.jwes.hit.edu.cn"]
+invalid_website = ["http://jwes.hit.edu.cn/"]
 
 # 钓鱼网站配置
 fishing_src = "http://today.hit.edu.cn"
-fishing_dest = "http://jwts.hit.edu.cn"
-fishing_dest_host = "jwts.hit.edu.cn"
+fishing_dest = "http://example.com/"
+fishing_dest_host = "example.com"
 
 # 限制访问的用户IP
 restrict_host = ["127.0.0.1"]
 
 # 是否开启钓鱼、禁止和限制访问功能
-func = True
+func_web_block = True
+func_user_block = False
+func_fish = True
 
 # 设置代理服务器监听的端口
 PROXY_PORT = 10240
@@ -100,10 +102,43 @@ def is_in_cache(cache, http_header):
             return index
     return -1
 
+
+def modify_request_for_fishing(request, http_header):
+    # 修改请求，进行钓鱼网站重定向 返回新的请求url
+    lines = request.decode('utf-8').split('\r\n')
+    # 修改请求行和 Host 头部
+    new_lines = []
+    for line in lines:
+        if line.startswith(http_header.method):
+            # 修改请求行
+            parts = line.split(' ')
+            if len(parts) >= 3:
+                parts[1] = http_header.url  # 更新 URL
+                new_line = ' '.join(parts)
+                new_lines.append(new_line)
+            else:
+                new_lines.append(line)
+        elif line.startswith('Host:'):
+            # 修改 Host 头部
+            new_lines.append(f"Host: {http_header.host}")
+        else:
+            new_lines.append(line)
+    return '\r\n'.join(new_lines).encode('utf-8')
+
+
 # 处理客户端请求的线程处理函数
-def handle_client(client_socket):
+def handle_client(client_socket, addr):
     
     global cache_index
+    
+    # 用户过滤
+    if func_user_block and (addr[0] in restrict_host):
+        print(addr[0] + '已经被禁止访问')
+        client_socket.close()   # 关闭socket
+        return
+    
+    
+    
     
     # 接收客户端请求
     # recv(bufsize, [flag])：接受TCP套接字的数据，数据会以字符串的形式返回
@@ -130,6 +165,20 @@ def handle_client(client_socket):
     
     header.method = parts[0]
     header.url    = parts[1]
+    
+    # 网站过滤
+    if func_web_block and any(site in header.url for site in invalid_website):
+        print("网站已经被屏蔽")
+        client_socket.close()
+        return
+    
+    # 钓鱼网站
+    if func_fish and fishing_src in header.url:
+        print(f"从源网站{fishing_src}转到目的网站{fishing_dest}")
+        header.host = fishing_dest_host
+        header.url = fishing_dest
+        # 重新将这些信息整合回到请求中
+        request = modify_request_for_fishing(request, header)
     
     
     # connect请求的格式为 arnc2024.cn:2024
@@ -344,7 +393,7 @@ def start_proxy():
         #   args：在参数target中传入的可调用对象的参数元组，默认为空元组()。
         #   kwargs：在参数target中传入的可调用对象的关键字参数字典，默认为空字典{}。
         #   daemon：默认为None，即继承当前调用者线程（即开启线程的线程，一般就是主线程）的守护模式属性，如果不为None，则无论该线程是否为守护模式，都会被设置为“守护模式”。
-        client_handler = threading.Thread(target=handle_client, args=(client_socket,), daemon=True)
+        client_handler = threading.Thread(target=handle_client, args=(client_socket,addr), daemon=True)
         # 开启线程活动
         client_handler.start()
 
