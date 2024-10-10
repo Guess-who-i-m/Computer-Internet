@@ -10,9 +10,35 @@ PROXY_PORT = 10240
 BUFFER_SIZE = 10 * 1024
 
 # 缓存字典，键值对格式(URL:缓存响应和响应时间)
-cache = {}
 CACHE_EXPIRY = 60      # 设置缓存的过期时间，单位为秒
+CACHE_NUM = 50
 
+# HTTP 重要头部数据 用来存储解析后的HTTP请求头信息
+class HttpHeader:
+    def __init__(self):
+        self.method = ''  # GET、POST 或 CONNECT
+        self.url = ''     # 请求的 URL
+        self.host = ''    # 目标主机
+        self.port = 80    # 目标端口
+
+# 缓存的 HTTP 头部（不包含 Cookie） 用来比较是否命中缓存
+class CacheHttpHead:
+    def __init__(self):
+        self.method = ''
+        self.url = ''
+        self.host = ''
+        self.port = 80
+        
+# 代理服务器缓存结构 
+class CacheEntry:
+    def __init__(self):
+        self.httpHead = CacheHttpHead()
+        self.buffer = b''      # 存储返回内容
+        self.date = ''         # 缓存内容的最后修改时间
+   
+cache = [CacheEntry() for _ in range(CACHE_NUM)]  # 缓存列表
+
+        
 def receive_full_response(remote_socket):
     response = b''
     while True:
@@ -54,61 +80,78 @@ def remove_content_length_header(response):
     # 返回修改后的完整响应
     return (new_headers + "\r\n\r\n" + body).encode('iso-8859-1')
 
+
+def parse_http_response(response):
+    # 解析 HTTP 响应，获取状态行、头部和正文
+    header_end = response.find(b'\r\n\r\n')
+    if header_end == -1:
+        return None, None, None
+    header_bytes = response[:header_end]
+    body = response[header_end+4:]
+    header_text = header_bytes.decode('iso-8859-1', errors='ignore')
+    lines = header_text.split('\r\n')
+    status_line = lines[0]
+    headers = {}
+    for line in lines[1:]:
+        if ': ' in line:
+            key, value = line.split(': ', 1)
+            headers[key.lower()] = value
+    return status_line, headers, body
+
+
+def http_equal(http1, http2):
+    # 判断两个 HTTP 报文是否相同
+    return (http1.method == http2.method and http1.host == http2.host
+            and http1.url == http2.url and http1.port == http2.port)
+    
+def is_in_cache(cache, http_header):
+    # 检查缓存中是否存在对应的条目
+    for index, entry in enumerate(cache):
+        if http_equal(entry.httpHead, http_header):
+            return index
+    return -1
+
 # 处理客户端请求的线程处理函数
 def handle_client(client_socket):
+    
     # 接收客户端请求
     # recv(bufsize, [flag])：接受TCP套接字的数据，数据会以字符串的形式返回
     # bufsize：是一个整数，表示要接收的最大字节数，接收实际数据量小于等于这个值
     # flag(可选)：一般忽略
-    
-    # request = client_socket.recv(BUFFER_SIZE).decode()     # decode用于解码
-    
-    request = b''  # 用于接收请求的字节串
-    while True:
-        # 先读取一定大小的字节
-        part = client_socket.recv(BUFFER_SIZE)
-        request += part
-        # 如果读取到的数据长度小于BUFFER_SIZE，说明已经接收完所有数据
-        if len(part) < BUFFER_SIZE:
-            break
-    
-    request = request.decode('iso-8859-1')
+    request = client_socket.recv(BUFFER_SIZE)     # decode用于解码
     
     if not request.strip():  # 使用strip()去掉首尾空白字符
         print("收到空请求，关闭连接。")
         client_socket.close()
         return
     
-    # if not request:
-    #     print("收到空请求，关闭连接。")
-    #     client_socket.close()
-    #     return
-    
     # 提取请求中的方法和目标主机
-    first_line = request.split('\n')[0]     # 提取请求中的第一行
-    # method, url, _ = first_line.split()     # 提取请求中的方法和目标主机
+    first_line = request.decode().split('\n')[0]     # 提取请求中的第一行
     parts = first_line.split()
-
+    
     if len(parts) < 3:
         print(parts)
         print(f"格式错误的请求行: '{first_line}'")
         client_socket.close()
         return
     
-    method, url, _ = parts  # 解包请求中的方法、URL和协议版本
-
+    header = HttpHeader()   # 实例化HTTP头对象
+    
+    header.method = parts[0]
+    header.url    = parts[1]
+    
     # connect请求的格式为 arnc2024.cn:2024
-    if method == "CONNECT":
+    if header.method == "CONNECT":
         # 提取目标主机和端口
-        target_host = url.split(':')[0]
-        target_port = int(url.split(':')[1])
+        header.host = header.url.split(':')[0]
+        header.port = int(header.url.split(':')[1])
 
         # 尝试连接目标服务器
         try:
             # 创建用于向目标IP发送请求的socket：使用IPv4和TCP相关参数
             remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             # connect()：客户端程序用来连接服务端
-            remote_socket.connect((target_host, target_port))
+            remote_socket.connect((header.host, header.port))
     
             # 向客户端发送 200 Connection Established 响应
             client_socket.send(b"HTTP/1.1 200 Connection Established\r\n\r\n")
@@ -120,84 +163,105 @@ def handle_client(client_socket):
             client_socket.close()
             
     # get/post请求格式是http://www.arnc2024.cn/
-    elif method == "GET" or method == "POST" :
-        
-        # # 提取目标主机和端口
-        # target_host = url.split(':')[0]
-        # target_port = int(url.split(':')[1])
+    elif header.method == "GET" or header.method == "POST" :
         
         # 由于格式和connect不一样，所以需要使用 urlparse 来解析 URL，提取目标主机和端口
-        parsed_url = urlparse(url)
-        target_host = parsed_url.hostname
-        target_port = parsed_url.port if parsed_url.port else 80  # 如果URL中没有端口，默认使用80端口，一般情况下后端服务器的服务进程默认开放在80
+        parsed_url = urlparse(header.url)
+        header.host = parsed_url.hostname
+        header.port = parsed_url.port if parsed_url.port else 80  # 如果URL中没有端口，默认使用80端口，一般情况下后端服务器的服务进程默认开放在80
         
-        # 检查是否在缓存中
-        if url in cache:
-            cache_data, timestamp, last_modified = cache[url]
-            
-            # 检查缓存有没有过期
-            if time.time() - timestamp < CACHE_EXPIRY:
-                # 没有过期，直接缓存命中，用缓存对象返回，并结束函数
-                print(f"使用本地缓存进行返回请求对象：{url}")
-                client_socket.send(cache_data)
-                client_socket.close()
-                return
-            else:
-                # 如果缓存过期，添加If-Modified-Since头行，之后再进行转发
-                print("缓存在本地过期，增加请求头")
-                request = add_if_modified_since(request, last_modified)
-        else:
-            print("没有命中缓存")
+        cache_entry = None 
         
+        # 检查缓存
+        for index, entry in enumerate(cache):
+            # 检查缓存中是否有相应的条目
+            for index, entry in enumerate(cache):
+                if  is_in_cache(cache, header):
+                    print("命中缓存")
+                    # 检查缓存
+                    cache_entry = cache[index]  # 初始化 cache_entry
+                    # 缓存命中，添加 If-Modified-Since 头部
+                    request = add_if_modified_since(request, cache_entry.date)
+                    
+
+        # if cache_entry is None:  # 如果缓存没有命中  
+        
+        cache_index = 0  # 当前应将缓存放在哪个位置        
+                    
         # 缓存没有命中，尝试连接目标服务器
         try:
             # 创建用于向目标IP发送请求的socket：使用IPv4和TCP相关参数
             remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            print("socket连接")
+            # print("socket连接")
             
             # connect()：客户端程序用来连接服务端
-            remote_socket.connect((target_host, target_port))
-            print("connect")
+            remote_socket.connect((header.host, header.port))
+            # print("connect")
 
             # 在Get/Post请求中，直接将原本的请求转发就可以
-            remote_socket.send(request.encode())
-            print("转发请求")
-            
-                    
-            
+            remote_socket.send(request)
+            # print("转发请求")
             
             # 获取响应
-            response = remote_socket.recv(BUFFER_SIZE)
-            # response = receive_full_response(remote_socket)
+            # response = remote_socket.recv(BUFFER_SIZE)
+            response = receive_full_response(remote_socket)
             
-            content_length = get_content_length(response)
+            # content_length = get_content_length(response)
             
-            if content_length and content_length != len(response):
+            #if content_length and content_length != len(response):
                 
-                print(f"Warning: Content-Length ({content_length}) does not match actual response length ({len(response)})")
+                # print(f"Warning: Content-Length ({content_length}) does not match actual response length ({len(response)})")
             
             
             
-            print("获得响应")
+            # print("获得响应")
             # print(response.decode())
             
-            if "304 Not Modified" in response.decode('iso-8859-1'):
-                # 虽然缓存过期，但是没有在服务器被修改，所以可以直接返回
-                client_socket.send(cache[url][0])
-                print(f"缓存没有被修改，所以可以直接返回内容：{url}")
+            status_line, headers, body = parse_http_response(response)
+            
+            if not status_line:
+                # 无法解析响应，直接转发
+                client_socket.sendall(response)
+                return
+            
+            # 当index>-1，缓存命中
+            if cache_entry != None: 
+                if "304" in status_line:
+                    # 没有在服务器被修改，所以可以直接返回
+                    client_socket.send(cache[header.url][0])
+                    print(f"缓存没有被修改，所以可以直接返回内容：{header.url}")
+                else:
+                    # 更新缓存
+                    print("缓存被修改了")
+                    print(status_line)
+                    client_socket.send(response)
+                    cache_entry.buffer = response
+                    # 修改最新的last-modified
+                    cache_entry.date = headers.get('last-modified', '')
             else:
-                # 更新缓存
-                print("缓存被修改了")
-                cache[url] = (response, time.time(), get_last_modified(response))
-                client_socket.send(response)
-
-            # 确立HTTP连接之后开始转发数据
-            forward_data(client_socket, remote_socket)
+                # 缓存没命中，选择index指向的cache进行更新
+                cache_entry = cache[cache_index % CACHE_NUM]  
+                
+                # 修改各项记录
+                cache_entry.httpHead.method = header.method
+                cache_entry.httpHead.url = header.url
+                cache_entry.httpHead.host = header.host
+                cache_entry.httpHead.port = header.port
+                cache_entry.buffer = response      
+                
+                # 获取 Last-Modified 时间
+                cache_entry.date = headers.get('last-modified', '')
+                # 更新索引
+                cache_index += 1
             
         except Exception as e:
             # print(cache)
             print(f"请求转发失败1：{e}")
             client_socket.close()
+    
+        finally:
+            client_socket.close()
+            remote_socket.close()
 
 
 
@@ -299,15 +363,25 @@ def start_proxy():
 
 # 缓存相关
 
-def add_if_modified_since(request, last_modified):
-    if last_modified:
-        # request_lines = request.split("\r\n")
-        # request_lines.insert(1, f"If-Modified-Since: {last_modified}")
-        # return "\r\n".join(request_lines)
-        
-        return f"{request}\r\nIf-Modified-Since: {last_modified}\r\n"
-
-    return request
+def add_if_modified_since(buffer, date):
+    # 修改 HTTP 请求，插入 If-Modified-Since 头部
+    # ISO-8859-1 是一种 字符编码标准
+    lines = buffer.decode('iso-8859-1').split('\r\n')
+    # 插入 If-Modified-Since 头部
+    new_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        new_lines.append(line)
+        if line.startswith('Host:'):
+            # 在 Host 后面插入 If-Modified-Since 头部
+            new_lines.append(f"If-Modified-Since: {date}")
+        i += 1
+        if line == '':
+            break  # 头部结束
+    # 添加剩余的行
+    new_lines.extend(lines[i:])
+    return '\r\n'.join(new_lines).encode('iso-8859-1')
 
 def get_last_modified(response):
     # 从响应头中提取Last-Modified字段
