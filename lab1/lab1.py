@@ -22,7 +22,7 @@ fishing_dest_host = "example.com"
 restrict_host = ["127.0.0.1"]
 
 # 是否开启钓鱼、禁止和限制访问功能
-func_web_block = True
+func_web_block = True 
 func_user_block = False
 func_fish = True
 
@@ -219,7 +219,7 @@ def handle_client(client_socket, addr):
         # 检查缓存
         index = is_in_cache(cache, header)
         
-        print(index)
+        # print(index)
         if index > -1:
             print(f"命中缓存{index}")
             # 检查缓存
@@ -275,6 +275,7 @@ def handle_client(client_socket, addr):
             if index > -1 : 
                 if "304" in status_line:
                     # 没有在服务器被修改，所以可以直接返回
+                    print(status_line)
                     client_socket.send(cache_entry.buffer)
                     print(f"缓存没有被修改，所以可以直接返回内容：{header.url}")
                 else:
