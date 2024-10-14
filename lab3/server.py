@@ -10,7 +10,7 @@ BUFFER_SIZE = 1024
 SEQ_SIZE = 4  # 序列号比特数 L = 4，修改时需要同时修改服务端和客户端的SEQ_SIZE
 WINDOW_SIZE = 8  # 发送窗口大小 W，满足 W + 1 <= 2^L
 TIMEOUT = 3  # 超时时间为 3 秒
-PACKET_LOSS_RATE = 0  # 模拟包丢失率
+PACKET_LOSS_RATE = 0.2  # 模拟包丢失率
 
 # 计时器类，用于控制超时重传
 class Timer:
@@ -91,31 +91,28 @@ def server_program():
             while base < len(data_list):
                 # 如果下一可用序列在滑动窗口范围内，且每超出待发送队列范围，那么直接发送
                 if next_seq_num < base + WINDOW_SIZE and next_seq_num < len(data_list):
+                    # 当滑动窗口还没有结束，且base = next_seq_num时，还要继续启动计时器
                     if base == next_seq_num:
                         timer.start(timeout_callback)
                     send_window_data(sock, client_addr, data_list, base, next_seq_num + 1)
                     # send_window_data(sock, client_addr, data_list, base, next_seq_num + 1)
                     next_seq_num += 1
 
-                try:
+                # 接收ack，并获取ack序列号
+                ack_message, _ = sock.recvfrom(BUFFER_SIZE)
+                ack_num = int(ack_message.decode())
+                print(f"Received ACK: {ack_num}")
+                
+                # 如果接收到ack，那么更新base的数字（base之前全被接收）
+                if ack_num >= base:
+                    # 当乱序到达时，可以确保base回退到概要发送的第一个
+                    base = ack_num + 1
                     
-                    # sock.settimeout(TIMEOUT)
-                    # 接收ack，并获取ack序列号
-                    ack_message, _ = sock.recvfrom(BUFFER_SIZE)
-                    ack_num = int(ack_message.decode())
-                    print(f"Received ACK: {ack_num}")
-                    
-                    # 如果接收到ack，那么更新base的数字（base之前全被接收）
-                    if ack_num >= base:
-                        base = ack_num + 1
-                        # timer.start(timeout_callback)
-                        if base == next_seq_num:
-                            timer.stop()            # 当base追赶上了next_seq_num，说明结束，停止计时器
-                        else:
-                            timer.start(timeout_callback)
-                except socket.timeout:
-                    print("Timeout waiting for ACK, resending...")
-                    send_window_data(sock, client_addr, data_list, base, next_seq_num)
+                    if base == next_seq_num:
+                        timer.stop()            # 当base追赶上了next_seq_num，说明结束，停止计时器
+                    else:
+                        timer.start(timeout_callback)
+
 
         elif message == 'quit':
             print("Client requested to quit.")
