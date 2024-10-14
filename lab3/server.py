@@ -12,6 +12,8 @@ WINDOW_SIZE = 8  # 发送窗口大小 W，满足 W + 1 <= 2^L
 TIMEOUT = 3  # 超时时间为 3 秒
 PACKET_LOSS_RATE = 0.2  # 模拟包丢失率
 
+
+
 # 计时器类，用于控制超时重传
 class Timer:
     def __init__(self, timeout):
@@ -33,9 +35,11 @@ class Timer:
             self.timer_thread.cancel()
             self.timer_thread = None
 
+
 # 利用随机数模拟随机丢失
 def loss_in_loss_ratio(loss_ratio):
     return random.random() < loss_ratio
+
 
 # 发送滑动窗口中的数据
 # sock是发送的套接字，addr是目标client地址
@@ -65,6 +69,8 @@ def server_program():
 
     # 模拟要发送的数据
     data_list = [f"Data {i}" for i in range(50)]  # 模拟要传输的数据
+    
+    
     base = 0                # 滑动窗口的第一个序号，也就是序列号最小的已发送但没收到ACK的数据包
     next_seq_num = 0        # 下一个可用的序列号，也就是第一个还没发送的数据报
     client_addr = None      # 客户端地址，使用recv方法来获取
