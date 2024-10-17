@@ -22,7 +22,7 @@ fishing_dest_host = "example.com"
 restrict_host = ["127.0.0.1"]
 
 # 是否开启钓鱼、禁止和限制访问功能
-func_web_block = True 
+func_web_block = False
 func_user_block = False
 func_fish = True
 
