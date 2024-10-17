@@ -219,14 +219,14 @@ def client_program(client_ip, client_port, server_ip, server_port):
             else:
                 print(f"客户端：收到不在窗口内的数据包，序列号：{seq_num}，已丢弃。")
                 # 可选：重发上一个确认的ACK
-                if expected_seq_num > 0:
-                    last_ack = seq_num 
-                    if not loss_in_loss_ratio(ACK_LOSS_RATE):
-                        ack_message = str(last_ack).encode()
-                        sock.sendto(ack_message, server_addr)
-                        print(f"客户端：重新发送ACK，序列号：{last_ack}")
-                    else:
-                        print(f"客户端：重新发送ACK丢失，序列号：{last_ack}")
+                
+                last_ack = seq_num 
+                if not loss_in_loss_ratio(ACK_LOSS_RATE):
+                    ack_message = str(last_ack).encode()
+                    sock.sendto(ack_message, server_addr)
+                    print(f"客户端：重新发送ACK，序列号：{last_ack}")
+                else:
+                    print(f"客户端：重新发送ACK丢失，序列号：{last_ack}")
                 judge = 0
 
         except KeyboardInterrupt:
