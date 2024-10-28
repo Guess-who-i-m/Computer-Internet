@@ -1,0 +1,29 @@
+import gbn as gbn
+import threading
+
+SERVER_IP = '127.0.0.1'
+SERVER_PORT1 = 12345
+SERVER_PORT2 = 12347
+
+CLIENT_IP = '127.0.0.1'
+CLIENT_PORT1 = 12346
+CLIENT_PORT2 = 12348
+
+# 模拟要发送的数据
+data1_list = [f"Data1 {i}" for i in range(50)]  # 模拟要传输的数据
+
+data2_list = [f"Data2 {i}" for i in range(50)]  # 模拟要传输的数据
+
+Thread_Server_Send = threading.Thread(target=gbn.server_program, args=(SERVER_IP, SERVER_PORT1, CLIENT_IP, CLIENT_PORT2, data1_list,))
+Thread_Server_Recv = threading.Thread(target=gbn.client_program, args=(SERVER_IP, SERVER_PORT2,  ))
+
+Thread_Client_Send = threading.Thread(target=gbn.server_program, args=(CLIENT_IP, CLIENT_PORT1, SERVER_IP, SERVER_PORT2, data2_list))
+Thread_Client_Recv = threading.Thread(target=gbn.client_program, args=(CLIENT_IP, CLIENT_PORT2, ))
+
+Thread_Server_Send.start()
+Thread_Server_Recv.start()
+
+Thread_Client_Send.start()
+Thread_Client_Recv.start()
+
+
