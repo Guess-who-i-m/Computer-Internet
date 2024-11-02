@@ -189,7 +189,6 @@ int get_mac_from_arp(int sockfd, const char *iface, const char* src_ip,unsigned 
             
         }
     }
-
     
     return 0;
 }
