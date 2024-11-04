@@ -26,7 +26,7 @@ struct route_entry {
 
 // 路由表
 struct route_entry routing_table[MAX_ROUTES] = {
-    {"192.168.48.130", "192.168.48.130", "ens33"},
+    {"192.168.48.138", "192.168.48.137", "ens33"},
     {"10.0.0.2", "10.0.0.1", "ens38"}
 };
 
@@ -40,6 +40,39 @@ const struct route_entry* lookup_next_hop(const char *dest_ip) {
     return NULL;
 }
 
+
+// 将目标 IP 和 MAC 写入 ARP 缓存
+int set_arp_cache(int sockfd, const char *iface, const char *target_ip, unsigned char *target_mac) {
+    struct arpreq req;
+    struct sockaddr_in *sin = (struct sockaddr_in *)&req.arp_pa;
+
+    memset(&req, 0, sizeof(struct arpreq));
+
+    // 设置目标 IP 地址
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = inet_addr(target_ip);
+
+    // 设置目标 MAC 地址
+    memcpy(req.arp_ha.sa_data, target_mac, ETH_ALEN);
+    req.arp_ha.sa_family = ARPHRD_ETHER;
+
+    // 设置 ARP 缓存接口
+    strncpy(req.arp_dev, iface, IFNAMSIZ - 1);
+
+    // 使用 SIOCSARP 命令设置 ARP 表项
+    if (ioctl(sockfd, SIOCSARP, &req) < 0) {
+        perror("Failed to set ARP entry");
+        return -1;
+    }
+
+    printf("Added ARP entry for %s with MAC: ", target_ip);
+    for (int i = 0; i < ETH_ALEN; i++) {
+        printf("%02x ", target_mac[i]);
+    }
+    printf("\n");
+
+    return 0;
+}
 
 
 // 发送 ARP 广播请求
@@ -188,7 +221,10 @@ int get_mac_from_arp(int sockfd, const char *iface, const char* src_ip,unsigned 
             printf("Arp broadcast request received failed.\n");
             
         }
+
+        set_arp_cache(sockfd, iface, dest_ip, dest_mac);
     }
+
     
     return 0;
 }
